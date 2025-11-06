@@ -1,10 +1,12 @@
 import os
 from datetime import datetime, timedelta
+from collections import defaultdict
+import traceback
+
 from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
-from collections import defaultdict
 
 from models import db, Group, Member, Bill, Item, ItemAssignment
 from config import Config
@@ -115,81 +117,92 @@ def upload_bill():
 
     except Exception as e:
         print("❌ Upload error:", e)
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # ---------- ITEM ASSIGNMENT (normalize to AMOUNTS ₹) ----------
-from collections import defaultdict
-
 @app.route('/api/assign', methods=['POST'])
 def assign_items():
-    payload = request.json or {}
-    raw = payload.get('assignments', [])
-    if not raw:
-        return jsonify({'status': 'ok', 'assigned': []})
+    try:
+        payload = request.json or {}
+        raw = payload.get('assignments', [])
+        if not isinstance(raw, list):
+            return jsonify({'error': 'assignments must be a list'}), 400
+        if not raw:
+            return jsonify({'status': 'ok', 'assigned': []})
 
-    per_item = defaultdict(list)
-    for a in raw:
-        per_item[int(a['item_id'])].append({
-            'member_id': int(a['member_id']),
-            'share': float(a.get('share') or 0.0)
-        })
+        # Group by item_id (UUID/string-safe)
+        per_item = defaultdict(list)
+        for a in raw:
+            try:
+                item_id = str(a['item_id'])
+                member_id = str(a['member_id'])
+                share = float(a.get('share') or 0.0)
+            except (KeyError, ValueError, TypeError):
+                return jsonify({'error': f'Bad assignment payload: {a}'}), 400
+            per_item[item_id].append({'member_id': member_id, 'share': share})
 
-    results = []
+        results = []
 
-    for item_id, assigns in per_item.items():
-        item = Item.query.get(item_id)
-        if not item:
-            continue
+        for item_id, assigns in per_item.items():
+            item = Item.query.get(item_id)
+            if not item:
+                # If an item doesn't exist, skip gracefully
+                continue
 
-        # Clear existing to avoid double counting on resave
-        db.session.query(ItemAssignment).filter_by(item_id=item_id).delete(synchronize_session=False)
-        db.session.flush()
+            # Clear existing to avoid double counting on resave
+            db.session.query(ItemAssignment).filter_by(item_id=item_id).delete(synchronize_session=False)
+            db.session.flush()
 
-        k = len(assigns)
-        price = float(item.price or 0.0)
-        provided = [float(a['share']) for a in assigns]
-        sum_provided = sum(provided)
+            k = len(assigns)
+            price = float(item.price or 0.0)
+            provided = [float(a['share']) for a in assigns]
+            sum_provided = sum(provided)
 
-        if k == 0 or price <= 0:
-            amounts = [0.0] * k
+            if k == 0 or price <= 0:
+                amounts = [0.0] * k
 
-        elif sum_provided == 0.0:
-            # nothing provided → equal split
-            base = round(price / k, 2)
-            amounts = [base] * k
-            # rounding fix
-            diff = round(price - sum(amounts), 2)
-            if amounts and abs(diff) >= 0.01:
-                amounts[0] = round(amounts[0] + diff, 2)
+            elif sum_provided == 0.0:
+                # nothing provided → equal split
+                base = round(price / k, 2)
+                amounts = [base] * k
+                # rounding fix
+                diff = round(price - sum(amounts), 2)
+                if amounts and abs(diff) >= 0.01:
+                    amounts[0] = round(amounts[0] + diff, 2)
 
-        elif sum_provided <= 1.0001:
-            # fractions → convert to ₹
-            amounts = [round(s * price, 2) for s in provided]
-            diff = round(price - sum(amounts), 2)
-            if amounts and abs(diff) >= 0.01:
-                amounts[0] = round(amounts[0] + diff, 2)
+            elif sum_provided <= 1.0001:
+                # fractions → convert to ₹
+                amounts = [round(s * price, 2) for s in provided]
+                diff = round(price - sum(amounts), 2)
+                if amounts and abs(diff) >= 0.01:
+                    amounts[0] = round(amounts[0] + diff, 2)
 
-        elif abs(sum_provided - price) <= max(0.02, 0.01 * price):
-            # already ₹ that (roughly) sum to price
-            amounts = [round(s, 2) for s in provided]
-            diff = round(price - sum(amounts), 2)
-            if amounts and abs(diff) >= 0.01:
-                amounts[0] = round(amounts[0] + diff, 2)
+            elif abs(sum_provided - price) <= max(0.02, 0.01 * price):
+                # already ₹ that (roughly) sum to price
+                amounts = [round(s, 2) for s in provided]
+                diff = round(price - sum(amounts), 2)
+                if amounts and abs(diff) >= 0.01:
+                    amounts[0] = round(amounts[0] + diff, 2)
 
-        else:
-            # normalize proportionally to match item price
-            amounts = [round((s / sum_provided) * price, 2) for s in provided]
-            diff = round(price - sum(amounts), 2)
-            if amounts and abs(diff) >= 0.01:
-                amounts[0] = round(amounts[0] + diff, 2)
+            else:
+                # normalize proportionally to match item price
+                amounts = [round((s / sum_provided) * price, 2) for s in provided]
+                diff = round(price - sum(amounts), 2)
+                if amounts and abs(diff) >= 0.01:
+                    amounts[0] = round(amounts[0] + diff, 2)
 
-        for a, amt in zip(assigns, amounts):
-            ia = ItemAssignment(item_id=item_id, member_id=a['member_id'], share=amt)  # store ₹
-            db.session.add(ia)
-            results.append({'item_id': item_id, 'member_id': a['member_id'], 'share': amt})
+            for a, amt in zip(assigns, amounts):
+                ia = ItemAssignment(item_id=item_id, member_id=a['member_id'], share=amt)  # store ₹
+                db.session.add(ia)
+                results.append({'item_id': item_id, 'member_id': a['member_id'], 'share': amt})
 
-    db.session.commit()
-    return jsonify({'status': 'ok', 'assigned': results})
+        db.session.commit()
+        return jsonify({'status': 'ok', 'assigned': results})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 # ---------- GROUP SUMMARY (sum AMOUNTS) ----------
 @app.route('/api/group/<group_id>/summary', methods=['GET'])

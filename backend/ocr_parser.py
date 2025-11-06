@@ -1,16 +1,22 @@
 from PIL import Image
+import os
 import pytesseract
 import re
-import os
 
-# ✅ Ensure pytesseract can find the executable (Windows-specific)
-# You can change this path if Tesseract is installed elsewhere.
-TES_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-if os.path.exists(TES_PATH):
-    pytesseract.pytesseract.tesseract_cmd = TES_PATH
-else:
-    print("⚠️ Warning: Tesseract executable not found at", TES_PATH)
-    print("   Please verify that Tesseract is installed correctly.")
+# ✅ Use environment variable if present (Docker/Linux)
+pytesseract.pytesseract.tesseract_cmd = os.environ.get(
+    "TESSERACT_CMD",
+    pytesseract.pytesseract.tesseract_cmd
+)
+
+# 🪟 Optional fallback for local Windows dev only
+# (comment this out or leave as-is if you still run locally on Windows)
+# LOCAL_TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# if os.path.exists(LOCAL_TESSERACT_PATH):
+#     pytesseract.pytesseract.tesseract_cmd = LOCAL_TESSERACT_PATH
+# else:
+#     print("⚠️ Warning: Tesseract executable not found locally — using default or Docker path")
+
 
 # ---------- OCR Conversion ----------
 def image_to_text(image_path):

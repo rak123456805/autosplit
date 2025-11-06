@@ -1,4 +1,3 @@
-readme: |
   # 🧮 AutoSplit – Smart Bill Splitting & OCR Receipt Parser
 
   AutoSplit is a full-stack web application that automatically **extracts items, amounts, and participants from uploaded receipts** to split group expenses fairly.  

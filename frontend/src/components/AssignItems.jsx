@@ -3,7 +3,7 @@ import API from "../api";
 
 export default function AssignItems({ group, bill, onSaved }) {
   const [members, setMembers] = useState([]);
-  const [assignMap, setAssignMap] = useState({}); // itemId -> [memberIds]
+  const [assignMap, setAssignMap] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,7 +38,6 @@ export default function AssignItems({ group, bill, onSaved }) {
       for (const it of bill.items) {
         const assigned = assignMap[it.id] || [];
         if ((assigned?.length || 0) === 0) {
-          // Default: split equally across all group members
           const allIds = (members || []).map((m) => m.id);
           if (allIds.length > 0) {
             const share = Number(it.price) / allIds.length;
@@ -55,11 +54,8 @@ export default function AssignItems({ group, bill, onSaved }) {
       }
 
       await API.post("/assign", { assignments: payload });
-
-      // notify parent to refresh summary
       onSaved?.();
 
-      // also emit a global event, in case Summary listens that way
       window.dispatchEvent(
         new CustomEvent("autosplit:assignmentsSaved", {
           detail: { groupId: group.id },
@@ -74,57 +70,75 @@ export default function AssignItems({ group, bill, onSaved }) {
   }
 
   return (
-    <div style={{ marginTop: 12 }}>
-      <h4>Assign Items to People</h4>
-      {error && <p style={{ color: "red" }}>{error}</p>}
+    <div className="assign-items-section">
+      <div className="section-header">
+        <h4>Assign Items to People</h4>
+        <div className="assignment-help">
+          Click to assign items to group members
+        </div>
+      </div>
+      
+      {error && <div className="error-message">{error}</div>}
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>Item</th>
-            <th style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>Price</th>
-            <th style={{ textAlign: "left", borderBottom: "1px solid #eee" }}>Assign</th>
-          </tr>
-        </thead>
-        <tbody>
+      <div className="assignments-table">
+        <div className="table-header">
+          <div className="table-col item-col">Item</div>
+          <div className="table-col price-col">Price</div>
+          <div className="table-col assign-col">Assign To</div>
+        </div>
+        
+        <div className="table-body">
           {bill.items.map((it) => (
-            <tr key={it.id}>
-              <td style={{ padding: "8px 6px" }}>{it.description}</td>
-              <td style={{ padding: "8px 6px" }}>₹{Number(it.price).toFixed(2)}</td>
-              <td style={{ padding: "8px 6px" }}>
-                {members.map((m) => {
-                  const checked = (assignMap[it.id] || []).includes(m.id);
-                  return (
-                    <label key={m.id} style={{ marginRight: 10 }}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleAssign(it.id, m.id)}
-                      />{" "}
-                      {m.name}
-                    </label>
-                  );
-                })}
-              </td>
-            </tr>
+            <div key={it.id} className="table-row">
+              <div className="table-col item-col">
+                <div className="item-name">{it.description}</div>
+              </div>
+              <div className="table-col price-col">
+                <div className="price-tag">₹{Number(it.price).toFixed(2)}</div>
+              </div>
+              <div className="table-col assign-col">
+                <div className="member-checkboxes">
+                  {members.map((m) => {
+                    const checked = (assignMap[it.id] || []).includes(m.id);
+                    return (
+                      <label 
+                        key={m.id} 
+                        className={`checkbox-label ${checked ? 'checked' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleAssign(it.id, m.id)}
+                          className="checkbox-input"
+                        />
+                        <span className="checkbox-custom"></span>
+                        <span className="member-name">{m.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
 
       <button
         onClick={saveAssignments}
         disabled={saving}
-        style={{
-          marginTop: 12,
-          padding: "8px 14px",
-          background: "#4CAF50",
-          color: "white",
-          border: "none",
-          borderRadius: 6,
-          cursor: "pointer",
-        }}
+        className="save-assignments-btn"
       >
-        {saving ? "Saving..." : "Save Assignments"}
+        {saving ? (
+          <>
+            <div className="spinner small"></div>
+            Saving Assignments...
+          </>
+        ) : (
+          <>
+            <span>💾</span>
+            Save Assignments
+          </>
+        )}
       </button>
     </div>
   );
